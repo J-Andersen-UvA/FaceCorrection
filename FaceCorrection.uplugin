@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Face Correction",
+  "Description": "Non-destructive facial animation corrections for Unreal Engine animation post-processing.",
+  "Category": "Animation",
+  "CreatedBy": "VICON",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "EnabledByDefault": true,
+  "Modules": [
+    {
+      "Name": "FaceCorrection",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "FaceCorrectionEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

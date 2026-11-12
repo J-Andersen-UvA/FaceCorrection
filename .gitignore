@@ -1,0 +1,36 @@
+# Unreal generated directories
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# IDE files
+.vs/
+.vscode/
+*.VC.db
+*.VC.opendb
+*.sln
+*.suo
+*.user
+
+# Build products
+*.dll
+*.exe
+*.exp
+*.lib
+*.obj
+*.pdb
+
+# Local Audio2Face dependencies and models
+ThirdParty/Audio2Face/bin/
+ThirdParty/Audio2Face/lib/
+ThirdParty/Audio2Face/models/
+
+# Local configuration
+Config/DefaultFaceCorrectionLocal.ini
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
