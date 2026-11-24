@@ -19,6 +19,125 @@ enum class EFaceCorrectionCurveBlendMode : uint8
     Additive
 };
 
+UENUM(BlueprintType)
+enum class EFaceCorrectionNullBehavior : uint8
+{
+    Transition,
+    UsePrevious,
+    UseNext,
+    Rest,
+    Manual
+};
+
+UENUM(BlueprintType)
+enum class EFaceCorrectionTransitionType : uint8
+{
+    Smooth,
+    Linear,
+    Sharp,
+    EaseIntoNext,
+    HoldThenRelease
+};
+
+USTRUCT(BlueprintType)
+struct FACECORRECTION_API FFaceCorrectionVisemeBlock
+{
+    GENERATED_BODY()
+
+    FFaceCorrectionVisemeBlock();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Face Correction")
+    FGuid blockId;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    FString sourcePhoneme;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    FName visemeId;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 startFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 endFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction", meta = (ClampMin = "0.0"))
+    float weight = 1.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    EFaceCorrectionNullBehavior nullBehavior = EFaceCorrectionNullBehavior::Transition;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    TArray<FGuid> appliedRuleIds;
+
+    bool isValid() const;
+    bool isNull(FName nullVisemeId) const;
+};
+
+USTRUCT(BlueprintType)
+struct FACECORRECTION_API FFaceCorrectionVisemeTransition
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 boundaryFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 blendStartFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 blendEndFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    EFaceCorrectionTransitionType transitionType = EFaceCorrectionTransitionType::Smooth;
+
+    bool isValid(
+        const FFaceCorrectionVisemeBlock& previous,
+        const FFaceCorrectionVisemeBlock& next) const;
+    float evaluateAlpha(double frame) const;
+};
+
+USTRUCT(BlueprintType)
+struct FACECORRECTION_API FFaceCorrectionWordBlock
+{
+    GENERATED_BODY()
+
+    FFaceCorrectionWordBlock();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Face Correction")
+    FGuid blockId;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    FString text;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    FString phonemeText;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 startFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 endFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 blendStartFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    int32 blendEndFrame = INDEX_NONE;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    TArray<FFaceCorrectionVisemeBlock> visemes;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    TArray<FFaceCorrectionVisemeTransition> transitions;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face Correction")
+    TArray<FGuid> appliedRuleIds;
+
+    bool isValid() const;
+    float evaluateWeight(double frame) const;
+};
+
 USTRUCT(BlueprintType)
 struct FACECORRECTION_API FFaceCorrectionCurveRule
 {

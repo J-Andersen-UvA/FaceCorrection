@@ -10,6 +10,18 @@
   "IsBetaVersion": true,
   "Installed": false,
   "EnabledByDefault": true,
+  "Plugins": [
+    {
+      "Name": "HandposeTimeline",
+      "Enabled": true,
+      "Optional": true
+    },
+    {
+      "Name": "PiperTTS",
+      "Enabled": true,
+      "Optional": true
+    }
+  ],
   "Modules": [
     {
       "Name": "FaceCorrection",
