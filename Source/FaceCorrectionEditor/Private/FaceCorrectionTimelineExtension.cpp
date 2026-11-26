@@ -281,6 +281,7 @@ public:
         SLATE_ARGUMENT(TArray<FFaceCorrectionReviewItem>, Items)
         SLATE_ARGUMENT(TArray<FName>, VisemeIds)
         SLATE_ARGUMENT(FString, PhonemeText)
+        SLATE_ARGUMENT(int32, SelectedDuration)
         SLATE_ARGUMENT(TWeakPtr<SWindow>, OwnerWindow)
         SLATE_ARGUMENT(FContinue, OnContinue)
     SLATE_END_ARGS()
@@ -290,6 +291,7 @@ public:
         items = arguments._Items;
         visemeIds = arguments._VisemeIds;
         phonemeText = arguments._PhonemeText;
+        selectedDuration = arguments._SelectedDuration;
         ownerWindow = arguments._OwnerWindow;
         onContinue = arguments._OnContinue;
 
@@ -304,6 +306,23 @@ public:
                 .Text(FText::FromString(FString::Printf(
                     TEXT("Piper phonemes: %s"),
                     *phonemeText)))
+                .AutoWrapText(true)
+            ]
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(10.0f, 0.0f, 10.0f, 8.0f)
+            [
+                SNew(STextBlock)
+                .Visibility(selectedDuration == INDEX_NONE
+                    ? EVisibility::Collapsed : EVisibility::Visible)
+                .Text_Lambda([this]()
+                {
+                    return FText::FromString(items.Num() > selectedDuration
+                        ? FString::Printf(
+                            TEXT("%d visemes need at least %d frames. Remove visemes or drag a longer range."),
+                            items.Num(), items.Num())
+                        : FString::Printf(TEXT("Selected duration: %d frames"), selectedDuration));
+                })
                 .AutoWrapText(true)
             ]
             + SVerticalBox::Slot()
@@ -358,7 +377,11 @@ public:
                 [
                     SNew(SButton)
                     .Text(FText::FromString(TEXT("Continue")))
-                    .IsEnabled_Lambda([this]() { return !items.IsEmpty(); })
+                    .IsEnabled_Lambda([this]()
+                    {
+                        return !items.IsEmpty() &&
+                            (selectedDuration == INDEX_NONE || items.Num() <= selectedDuration);
+                    })
                     .OnClicked_Lambda([this]()
                     {
                         for (FFaceCorrectionReviewItem& item : items)
@@ -512,6 +535,7 @@ private:
     TArray<FFaceCorrectionReviewItem> items;
     TArray<FName> visemeIds;
     FString phonemeText;
+    int32 selectedDuration = INDEX_NONE;
     TWeakPtr<SWindow> ownerWindow;
     FContinue onContinue;
     TSharedPtr<SVerticalBox> rows;
@@ -891,7 +915,7 @@ public:
                     FVector2D(transitionLeft - startSize * 0.4f, transitionHandleCenterY - startSize * 0.5f),
                     FVector2D(transitionLeft - startSize * 0.4f, transitionHandleCenterY + startSize * 0.5f),
                     geometry,
-                    startHovered ? FLinearColor::White : previousColor,
+                    startHovered ? FLinearColor::White : nextColor,
                     *brush,
                     elements,
                     layer + 5);
@@ -900,13 +924,20 @@ public:
                     FVector2D(transitionRight + endSize * 0.4f, transitionHandleCenterY - endSize * 0.5f),
                     FVector2D(transitionRight + endSize * 0.4f, transitionHandleCenterY + endSize * 0.5f),
                     geometry,
-                    endHovered ? FLinearColor::White : nextColor,
+                    endHovered ? FLinearColor::White : previousColor,
                     *brush,
                     elements,
                     layer + 5);
             }
         }
 
+        if (insertionAnchor != INDEX_NONE && insertionAnchor != insertionCursor)
+        {
+            const float left = timeline.getOffsetAtFrame(FMath::Min(insertionAnchor, insertionCursor));
+            const float right = timeline.getOffsetAtFrame(FMath::Max(insertionAnchor, insertionCursor));
+            drawBox(6, left, 0.0f, right - left, geometry.GetLocalSize().Y,
+                FLinearColor(0.18f, 0.58f, 0.85f, 0.32f));
+        }
         drawBox(6, trimStartX, 0.0f, 2.0f, faceLanePaintHeight, FLinearColor(0.15f, 0.65f, 0.95f, 0.95f));
         drawBox(6, trimEndX - 2.0f, 0.0f, 2.0f, faceLanePaintHeight, FLinearColor(0.15f, 0.65f, 0.95f, 0.95f));
         const float playheadX = timeline.getOffsetAtFrame(timeline.currentFrame);
@@ -1028,8 +1059,11 @@ public:
         if (hit.wordIndex == INDEX_NONE)
         {
             extension->selectWord(INDEX_NONE);
-            extension->insertWordAtFrame(extension->getContext().getFrameAtOffset(local.X));
-            return FReply::Handled();
+            const auto& timeline = extension->getContext();
+            insertionAnimation = timeline.animation;
+            insertionAnchor = getInsertionBoundary(timeline, local.X);
+            insertionCursor = insertionAnchor;
+            return FReply::Handled().CaptureMouse(SharedThis(this));
         }
 
         extension->selectWord(hit.wordIndex);
@@ -1040,7 +1074,7 @@ public:
         drag = hit;
         originalWord = extension->getWords()[hit.wordIndex];
         draftWord = originalWord;
-        dragFrame = extension->getContext().getFrameAtOffset(local.X);
+        dragFrame = getDragFrame(extension->getContext(), local.X);
         return FReply::Handled().CaptureMouse(SharedThis(this));
     }
 
@@ -1067,11 +1101,17 @@ public:
             return FReply::Unhandled();
         }
         const float x = local.X;
+        if (insertionAnchor != INDEX_NONE)
+        {
+            insertionCursor = getInsertionBoundary(extension->getContext(), x);
+            Invalidate(EInvalidateWidgetReason::Paint);
+            return FReply::Handled();
+        }
         if (drag.wordIndex == INDEX_NONE)
         {
             return FReply::Unhandled();
         }
-        updateDraft(extension->getContext().getFrameAtOffset(x));
+        updateDraft(getDragFrame(extension->getContext(), x));
         Invalidate(EInvalidateWidgetReason::Paint);
         return FReply::Handled();
     }
@@ -1085,10 +1125,27 @@ public:
             return FReply::Unhandled();
         }
         const TSharedPtr<FFaceCorrectionTimelineExtension> extension = owner.Pin();
+        if (insertionAnchor != INDEX_NONE)
+        {
+            const int32 anchor = insertionAnchor;
+            insertionAnchor = INDEX_NONE;
+            Invalidate(EInvalidateWidgetReason::Paint);
+            if (extension.IsValid() && insertionAnimation.IsValid() &&
+                extension->getContext().animation == insertionAnimation)
+            {
+                const auto& timeline = extension->getContext();
+                const float x = geometry.AbsoluteToLocal(event.GetScreenSpacePosition()).X;
+                const int32 end = getInsertionBoundary(timeline, x);
+                extension->insertWordAtFrame(
+                    FMath::Min(FMath::Min(anchor, end), timeline.lastFrame),
+                    end == anchor ? INDEX_NONE : FMath::Abs(end - anchor));
+            }
+            return FReply::Handled().ReleaseMouseCapture();
+        }
         if (extension.IsValid() && extension->getWords().IsValidIndex(drag.wordIndex))
         {
             const float x = geometry.AbsoluteToLocal(event.GetScreenSpacePosition()).X;
-            updateDraft(extension->getContext().getFrameAtOffset(x));
+            updateDraft(getDragFrame(extension->getContext(), x));
             extension->getWords()[drag.wordIndex] = draftWord;
             extension->wordsChanged();
         }
@@ -1099,6 +1156,9 @@ public:
     virtual void OnMouseCaptureLost(const FCaptureLostEvent& event) override
     {
         drag = {};
+        insertionAnchor = INDEX_NONE;
+        insertionAnimation.Reset();
+        Invalidate(EInvalidateWidgetReason::Paint);
         SLeafWidget::OnMouseCaptureLost(event);
     }
 
@@ -1338,61 +1398,24 @@ private:
         return {};
     }
 
-    void scaleWord(const int32 newStart, const int32 newEnd)
+    static int32 getInsertionBoundary(
+        const FHandposeTimelineExtensionContext& timeline,
+        const float offset)
     {
-        const TSharedPtr<FFaceCorrectionTimelineExtension> extension = owner.Pin();
-        if (!extension.IsValid())
+        return FMath::Clamp(
+            FMath::RoundToInt(offset / FMath::Max(timeline.pixelsPerFrame, UE_SMALL_NUMBER)),
+            0, timeline.lastFrame + 1);
+    }
+
+    int32 getDragFrame(
+        const FHandposeTimelineExtensionContext& timeline,
+        const float offset) const
+    {
+        if (drag.handle == EHandle::WordEnd && offset >= timeline.getTotalWidth())
         {
-            return;
+            return timeline.lastFrame + 1;
         }
-        draftWord = originalWord;
-        const double oldDuration = originalWord.endFrame - originalWord.startFrame + 1.0;
-        const double newDuration = newEnd - newStart + 1.0;
-        const int32 blendInFrames = originalWord.startFrame - originalWord.blendStartFrame;
-        const int32 blendOutFrames = originalWord.blendEndFrame - originalWord.endFrame;
-        draftWord.startFrame = newStart;
-        draftWord.endFrame = newEnd;
-        draftWord.blendStartFrame = FMath::Max(0, newStart - blendInFrames);
-        draftWord.blendEndFrame = FMath::Min(
-            extension->getContext().lastFrame,
-            newEnd + blendOutFrames);
-        for (int32 index = 0; index < draftWord.visemes.Num(); ++index)
-        {
-            const FFaceCorrectionVisemeBlock& original = originalWord.visemes[index];
-            FFaceCorrectionVisemeBlock& scaled = draftWord.visemes[index];
-            const double startAlpha = (original.startFrame - originalWord.startFrame) / oldDuration;
-            const double endAlpha = (original.endFrame + 1.0 - originalWord.startFrame) / oldDuration;
-            scaled.startFrame = FMath::Clamp(
-                FMath::RoundToInt(newStart + startAlpha * newDuration),
-                newStart,
-                newEnd);
-            const int32 endExclusive = FMath::Clamp(
-                FMath::RoundToInt(newStart + endAlpha * newDuration),
-                scaled.startFrame + 1,
-                newEnd + 1);
-            scaled.endFrame = endExclusive - 1;
-        }
-        for (int32 index = 0; index < draftWord.transitions.Num(); ++index)
-        {
-            const FFaceCorrectionVisemeTransition& original = originalWord.transitions[index];
-            FFaceCorrectionVisemeTransition& scaled = draftWord.transitions[index];
-            const int32 boundary = draftWord.visemes[index + 1].startFrame;
-            const auto scaleFrame = [oldDuration, newDuration, newStart, this](const int32 frame)
-            {
-                const double alpha =
-                    (frame - originalWord.startFrame) / oldDuration;
-                return FMath::RoundToInt(newStart + alpha * newDuration);
-            };
-            scaled.boundaryFrame = boundary;
-            scaled.blendStartFrame = FMath::Clamp(
-                scaleFrame(original.blendStartFrame),
-                draftWord.visemes[index].startFrame,
-                boundary);
-            scaled.blendEndFrame = FMath::Clamp(
-                scaleFrame(original.blendEndFrame),
-                boundary,
-                draftWord.visemes[index + 1].endFrame);
-        }
+        return timeline.getFrameAtOffset(offset);
     }
 
     void updateDraft(const int32 frame)
@@ -1430,18 +1453,50 @@ private:
             break;
         }
         case EHandle::WordStart:
-            scaleWord(
-                FMath::Clamp(originalWord.startFrame + delta, 0, originalWord.endFrame),
-                originalWord.endFrame);
+        {
+            const int32 maxStartFrame = draftWord.visemes.IsEmpty()
+                ? draftWord.endFrame
+                : draftWord.visemes[0].endFrame;
+            draftWord.startFrame = FMath::Clamp(
+                originalWord.startFrame + delta, 0, maxStartFrame);
+            const int32 appliedDelta = draftWord.startFrame - originalWord.startFrame;
+            draftWord.blendStartFrame = FMath::Max(
+                0, originalWord.blendStartFrame + appliedDelta);
+            if (!draftWord.visemes.IsEmpty())
+            {
+                draftWord.visemes[0].startFrame = draftWord.startFrame;
+            }
+            if (!draftWord.transitions.IsEmpty())
+            {
+                FFaceCorrectionVisemeTransition& first = draftWord.transitions[0];
+                first.blendStartFrame = FMath::Max(
+                    first.blendStartFrame, draftWord.startFrame);
+            }
             break;
+        }
         case EHandle::WordEnd:
-            scaleWord(
-                originalWord.startFrame,
-                FMath::Clamp(
-                    originalWord.endFrame + delta,
-                    originalWord.startFrame,
-                    extension->getContext().lastFrame));
+        {
+            const int32 lastFrame = extension->getContext().lastFrame;
+            const int32 minEndFrame = draftWord.visemes.IsEmpty()
+                ? draftWord.startFrame
+                : draftWord.visemes.Last().startFrame;
+            draftWord.endFrame = FMath::Clamp(
+                originalWord.endFrame + delta, minEndFrame, lastFrame);
+            const int32 appliedDelta = draftWord.endFrame - originalWord.endFrame;
+            draftWord.blendEndFrame = FMath::Min(
+                lastFrame, originalWord.blendEndFrame + appliedDelta);
+            if (!draftWord.visemes.IsEmpty())
+            {
+                draftWord.visemes.Last().endFrame = draftWord.endFrame;
+            }
+            if (!draftWord.transitions.IsEmpty())
+            {
+                FFaceCorrectionVisemeTransition& last = draftWord.transitions.Last();
+                last.blendEndFrame = FMath::Min(
+                    last.blendEndFrame, draftWord.endFrame);
+            }
             break;
+        }
         case EHandle::BlendStart:
             draftWord.blendStartFrame = FMath::Clamp(
                 originalWord.blendStartFrame + delta,
@@ -1530,6 +1585,9 @@ private:
     FHit hover;
     FHit drag;
     int32 dragFrame = 0;
+    int32 insertionAnchor = INDEX_NONE;
+    int32 insertionCursor = INDEX_NONE;
+    TWeakObjectPtr<UAnimSequenceBase> insertionAnimation;
     FFaceCorrectionWordBlock originalWord;
     FFaceCorrectionWordBlock draftWord;
 };
@@ -1637,6 +1695,11 @@ void FFaceCorrectionTimelineExtension::updateContext(
 {
     if (activeAnimation.Get() != newContext.animation.Get())
     {
+        if (const TSharedPtr<SWindow> window = activeWindow.Pin())
+        {
+            activeWindow.Reset();
+            window->RequestDestroyWindow();
+        }
         words.Reset();
         selectedWordIndex = INDEX_NONE;
         activeAnimation = newContext.animation;
@@ -1878,7 +1941,9 @@ void FFaceCorrectionTimelineExtension::setConfig(UFaceCorrectionConfig* newConfi
     wordsChanged();
 }
 
-void FFaceCorrectionTimelineExtension::insertWordAtFrame(const int32 frame)
+void FFaceCorrectionTimelineExtension::insertWordAtFrame(
+    const int32 frame,
+    const int32 duration)
 {
     if (!context.animation.IsValid())
     {
@@ -1933,7 +1998,7 @@ void FFaceCorrectionTimelineExtension::insertWordAtFrame(const int32 frame)
             SNew(SButton)
             .Text(FText::FromString(TEXT("Convert to Phonemes")))
             .OnClicked_Lambda(
-                [weak, weakWindow, textBox, errorText, frame]()
+                [weak, weakWindow, textBox, errorText, frame, duration]()
                 {
                     const TSharedPtr<FFaceCorrectionTimelineExtension> pinned = weak.Pin();
                     if (!pinned.IsValid())
@@ -1961,7 +2026,8 @@ void FFaceCorrectionTimelineExtension::insertWordAtFrame(const int32 frame)
                         phonemeText,
                         MoveTemp(items),
                         frame,
-                        INDEX_NONE);
+                        INDEX_NONE,
+                        duration);
                     return FReply::Handled();
                 })
         ]);
@@ -2487,7 +2553,8 @@ void FFaceCorrectionTimelineExtension::openReview(
     const FString& phonemeText,
     TArray<FFaceCorrectionReviewItem> items,
     const int32 startFrame,
-    const int32 wordIndex)
+    const int32 wordIndex,
+    const int32 duration)
 {
     if (const TSharedPtr<SWindow> window = activeWindow.Pin())
     {
@@ -2512,9 +2579,10 @@ void FFaceCorrectionTimelineExtension::openReview(
         .Items(MoveTemp(items))
         .VisemeIds(config->getVisemeIds())
         .PhonemeText(phonemeText)
+        .SelectedDuration(duration)
         .OwnerWindow(weakWindow)
         .OnContinue(
-            [weak, text, phonemeText, startFrame, wordIndex](
+            [weak, text, phonemeText, startFrame, wordIndex, duration](
                 const TArray<FFaceCorrectionReviewItem>& reviewedItems)
             {
                 if (const TSharedPtr<FFaceCorrectionTimelineExtension> pinned = weak.Pin())
@@ -2524,7 +2592,8 @@ void FFaceCorrectionTimelineExtension::openReview(
                         phonemeText,
                         reviewedItems,
                         startFrame,
-                        wordIndex);
+                        wordIndex,
+                        duration);
                 }
             }));
     window->SetOnWindowClosed(FOnWindowClosed::CreateLambda(
@@ -2544,7 +2613,8 @@ void FFaceCorrectionTimelineExtension::commitReview(
     const FString& phonemeText,
     const TArray<FFaceCorrectionReviewItem>& items,
     const int32 requestedStartFrame,
-    const int32 wordIndex)
+    const int32 wordIndex,
+    const int32 duration)
 {
     if (config.Get() == nullptr || items.IsEmpty() || !context.animation.IsValid())
     {
@@ -2558,17 +2628,19 @@ void FFaceCorrectionTimelineExtension::commitReview(
     {
         const FFaceCorrectionVisemeDefinition* definition =
             config->findViseme(item.visemeId);
-        const int32 duration = FMath::Max(
+        const int32 visemeDuration = FMath::Max(
             1,
             definition != nullptr
                 ? definition->defaultDurationFrames
                 : config->fallbackVisemeDurationFrames);
-        durations.Add(duration);
-        desiredDuration += duration;
+        durations.Add(visemeDuration);
+        desiredDuration += visemeDuration;
     }
 
     FFaceCorrectionWordBlock word;
-    int32 totalDuration = FMath::Max(desiredDuration, config->minimumWordDurationFrames);
+    int32 totalDuration = duration == INDEX_NONE
+        ? FMath::Max(desiredDuration, config->minimumWordDurationFrames)
+        : duration;
     int32 startFrame = FMath::Clamp(requestedStartFrame, 0, context.lastFrame);
     int32 blendInFrames = config->defaultBlendInFrames;
     int32 blendOutFrames = config->defaultBlendOutFrames;
@@ -2581,6 +2653,10 @@ void FFaceCorrectionTimelineExtension::commitReview(
         totalDuration = word.endFrame - word.startFrame + 1;
     }
     totalDuration = FMath::Clamp(totalDuration, 1, context.lastFrame - startFrame + 1);
+    if (duration != INDEX_NONE && totalDuration < items.Num())
+    {
+        return;
+    }
     word.text = text;
     word.phonemeText = phonemeText;
     word.startFrame = startFrame;
@@ -2594,17 +2670,21 @@ void FFaceCorrectionTimelineExtension::commitReview(
     word.visemes.Reset();
 
     int32 accumulatedDuration = 0;
+    int32 childStart = startFrame;
     for (int32 index = 0; index < items.Num(); ++index)
     {
-        const int32 childStart = startFrame + FMath::RoundToInt(
-            static_cast<double>(accumulatedDuration) /
-            FMath::Max(1, desiredDuration) * totalDuration);
         accumulatedDuration += durations[index];
-        const int32 childEndExclusive = index == items.Num() - 1
+        int32 childEndExclusive = index == items.Num() - 1
             ? word.endFrame + 1
             : startFrame + FMath::RoundToInt(
                 static_cast<double>(accumulatedDuration) /
                 FMath::Max(1, desiredDuration) * totalDuration);
+        if (totalDuration >= items.Num())
+        {
+            const int32 remainingVisemes = items.Num() - index - 1;
+            childEndExclusive = FMath::Clamp(
+                childEndExclusive, childStart + 1, word.endFrame + 1 - remainingVisemes);
+        }
 
         FFaceCorrectionVisemeBlock viseme;
         viseme.sourcePhoneme = items[index].phoneme;
@@ -2615,6 +2695,7 @@ void FFaceCorrectionTimelineExtension::commitReview(
             word.startFrame,
             word.endFrame);
         word.visemes.Add(MoveTemp(viseme));
+        childStart = childEndExclusive;
     }
 
     word.transitions.Reset();
@@ -2624,12 +2705,10 @@ void FFaceCorrectionTimelineExtension::commitReview(
         const FFaceCorrectionVisemeBlock& next = word.visemes[index + 1];
         FFaceCorrectionVisemeTransition transition;
         transition.boundaryFrame = next.startFrame;
-        transition.blendStartFrame = FMath::Max(
-            previous.startFrame,
-            transition.boundaryFrame - config->defaultVisemeBlendFrames);
-        transition.blendEndFrame = FMath::Min(
-            next.endFrame,
-            transition.boundaryFrame + config->defaultVisemeBlendFrames);
+        transition.blendStartFrame =
+            previous.startFrame + (previous.endFrame - previous.startFrame) / 2;
+        transition.blendEndFrame =
+            next.startFrame + (next.endFrame - next.startFrame) / 2;
         word.transitions.Add(transition);
     }
 

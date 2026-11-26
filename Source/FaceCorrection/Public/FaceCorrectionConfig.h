@@ -79,7 +79,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timeline", meta = (ClampMin = "0"))
     int32 defaultBlendOutFrames = 3;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timeline", meta = (ClampMin = "0"))
+    UPROPERTY(BlueprintReadOnly, Category = "Timeline", meta = (DeprecatedProperty, DeprecationMessage = "Default viseme transitions now blend between viseme midpoints."))
     int32 defaultVisemeBlendFrames = 2;
 
     FName findVisemeId(const FString& phoneme) const;

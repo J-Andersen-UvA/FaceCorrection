@@ -43,7 +43,7 @@ public:
     const UFaceCorrectionConfig* getConfig() const;
     int32 getSelectedWordIndex() const;
     void selectWord(int32 wordIndex);
-    void insertWordAtFrame(int32 frame);
+    void insertWordAtFrame(int32 frame, int32 duration = INDEX_NONE);
     void reviewWord(int32 wordIndex);
     void openRulesForBlock(int32 wordIndex, int32 visemeIndex);
     void deleteWord(int32 wordIndex);
@@ -64,13 +64,15 @@ private:
         const FString& phonemeText,
         TArray<FFaceCorrectionReviewItem> items,
         int32 startFrame,
-        int32 wordIndex);
+        int32 wordIndex,
+        int32 duration = INDEX_NONE);
     void commitReview(
         const FString& text,
         const FString& phonemeText,
         const TArray<FFaceCorrectionReviewItem>& items,
         int32 startFrame,
-        int32 wordIndex);
+        int32 wordIndex,
+        int32 duration);
     TArray<FString> splitPhonemes(const FString& phonemeText) const;
 
     bool enabled = false;
